@@ -997,10 +997,13 @@ int main() {
         try {
             if (final.names.size() == final.aligned.size()) {
                 writeFasta(final.aligned, final.names, "final_msa.fasta");
+                writeA3M(final.aligned, final.names, "final_msa.a3m");
             } else {
                 writeFasta(final.aligned, "final_msa.fasta");
+                writeA3M(final.aligned, "final_msa.a3m");
             }
             cout << "\nOutput written to final_msa.fasta" << endl;
+            cout << "A3M written to final_msa.a3m" << endl;
             logInfo("Output file written successfully");
         }
         catch (const exception& e) {

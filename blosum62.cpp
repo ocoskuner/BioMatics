@@ -60,18 +60,22 @@ std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
                         P_ij[i][j] = P[a] * P[b];         // baseline co-occurrence
 
                     double denom = P[a] * P[b];
-                    double ratio = (P_ij[i][j] + EPSILON) / (denom + EPSILON);
+                    double raw_ratio = (P_ij[i][j] + EPSILON) / (denom + EPSILON);
+                    // Clamp ratio to a safe range to avoid extreme/invalid values
+                    double ratio = raw_ratio;
+                    if (ratio < 1e-6) ratio = 1e-6;
+                    else if (ratio > 1e6) ratio = 1e6;
                     cost[i][j] = -log2(ratio);            // convert to log-odds cost
                     
                     // Validate the computed cost
                     if (std::isnan(cost[i][j]) || std::isinf(cost[i][j])) {
                         logError(std::string("Invalid cost computed for (") + std::string(1, a) + "," + std::string(1, b) + "): " + std::to_string(cost[i][j]));
-                        cost[i][j] = 1.0; // fallback value
+                        cost[i][j] = 0.0; // neutral fallback
                     }
                 }
                 catch (const std::exception& e) {
                     logError("Error computing cost for (" + std::to_string(i) + "," + std::to_string(j) + "): " + e.what());
-                    cost[i][j] = 1.0; // fallback value
+                    cost[i][j] = 0.0; // neutral fallback
                 }
             }
         }

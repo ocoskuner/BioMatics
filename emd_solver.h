@@ -56,13 +56,13 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
 
         auto cost = getRealBlosumLogOddsMatrix();  // dissimilarity proxy
 
-        // Clamp cost values to prevent extreme values
+        // Clamp cost values to prevent extreme values and neutralize invalids
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
                 cost[i][j] = std::max(cost[i][j], -3.5);
                 if (std::isnan(cost[i][j]) || std::isinf(cost[i][j])) {
                     logError("Invalid cost value at (" + std::to_string(i) + "," + std::to_string(j) + ")");
-                    cost[i][j] = 1.0; // fallback value
+                    cost[i][j] = 0.0; // neutral fallback
                 }
             }
         }

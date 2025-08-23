@@ -122,6 +122,7 @@ struct Profile {
     vector<vector<double>> freq;
     int size;
     vector<string> aligned;
+    vector<string> names; // aligned sequence names in the same row order
 };
 
 /**
@@ -621,6 +622,11 @@ Profile combine(const Profile& A, const Profile& B, const vector<pair<char, char
     int L = aln.size();
     vector<vector<double>> prof(L, vector<double>(21, 0.0));
     vector<string> aligned(A.aligned.size() + B.aligned.size(), string(L, '-'));
+    vector<string> names;
+    names.reserve(A.aligned.size() + B.aligned.size());
+    // Row order: first all rows from A, then all rows from B
+    for (const auto& n : A.names) names.push_back(n);
+    for (const auto& n : B.names) names.push_back(n);
     int ai = 0, bi = 0;
 
     for (int i = 0; i < L; ++i) {
@@ -639,7 +645,7 @@ Profile combine(const Profile& A, const Profile& B, const vector<pair<char, char
         if (b != '-') bi++;
     }
 
-    return {prof, A.size + B.size, aligned};
+    return {prof, A.size + B.size, aligned, names};
 }
 
 /**
@@ -796,6 +802,7 @@ vector<int> findStrongColumns(const vector<string>& aligned, int mismatch_allow)
  * @throws std::exception May rethrow underlying errors during refinement steps
  */
 Profile iterativeRefinement(const vector<string>& seqs,
+    const vector<string>& names,
     const Profile& initialProfile,
     int iterations = 3,
     bool verbose = false)
@@ -811,18 +818,31 @@ if (verbose) cout << "\n Iteration " << iter + 1 << endl;
 
 for (int i = 0; i < seqs.size(); ++i) {
 vector<string> rest;
-for (int j = 0; j < seqs.size(); ++j)
-if (i != j) rest.push_back(seqs[j]);
+vector<string> restNames;
+for (int j = 0; j < seqs.size(); ++j) {
+if (i != j) { rest.push_back(seqs[j]); restNames.push_back(names[j]); }
+}
 
 vector<Profile> partialProfiles;
-for (const auto& s : rest)
-partialProfiles.push_back({computeDistributions({s}), 1, {s}});
+for (int ri = 0; ri < rest.size(); ++ri) {
+    const auto& s = rest[ri];
+    Profile p;
+    p.freq = computeDistributions({s});
+    p.size = 1;
+    p.aligned = {s};
+    p.names = { restNames[ri] };
+    partialProfiles.push_back(std::move(p));
+}
 
 vector<vector<double>> dist = computeDistanceMatrix(rest);
 TreeNode* tree = buildGuideTree(dist);
 Profile alignedRest = alignFromTree(tree, partialProfiles);
 
-Profile toAdd = {computeDistributions({seqs[i]}), 1, {seqs[i]}};
+Profile toAdd;
+toAdd.freq = computeDistributions({seqs[i]});
+toAdd.size = 1;
+toAdd.aligned = {seqs[i]};
+toAdd.names = { names[i] };
 vector<double> go1, ge1, go2, ge2;
 computeGapVectors(alignedRest.freq, go1, ge1, 10.0, 5.0, 5.0, 2.5);
 computeGapVectors(toAdd.freq, go2, ge2, 10.0, 5.0, 5.0, 2.5);
@@ -902,8 +922,15 @@ int main() {
         logProgress("Creating sequence profiles...");
         vector<Profile> profiles;
         try {
-            for (const auto& s : seqs) {
-                profiles.push_back({computeDistributions({s}), 1, {s}});
+            for (size_t idx = 0; idx < seqs.size(); ++idx) {
+                const auto& s = seqs[idx];
+                const auto& nm = names[idx];
+                Profile p;
+                p.freq = computeDistributions({s});
+                p.size = 1;
+                p.aligned = {s};
+                p.names = {nm};
+                profiles.push_back(std::move(p));
             }
             logDebug("Created " + to_string(profiles.size()) + " initial profiles");
         }
@@ -949,7 +976,7 @@ int main() {
         logProgress("Starting iterative refinement...");
         Profile final;
         try {
-            final = iterativeRefinement(seqs, initial, 3, true);  
+            final = iterativeRefinement(seqs, names, initial, 3, true);  
             logInfo("Iterative refinement completed");
         }
         catch (const exception& e) {
@@ -961,12 +988,18 @@ int main() {
         }
 
         cout << "\n=== FINAL MULTIPLE ALIGNMENT ===" << endl;
-        for (const auto& row : final.aligned)
-            cout << row << endl;
+        for (size_t i = 0; i < final.aligned.size(); ++i) {
+            const string& nm = (final.names.size() == final.aligned.size()) ? final.names[i] : (string("Sequence_") + to_string(i+1));
+            cout << ">" << nm << "\n" << final.aligned[i] << endl;
+        }
 
         logProgress("Writing results to file...");
         try {
-            writeFasta(final.aligned, "final_msa.fasta");
+            if (final.names.size() == final.aligned.size()) {
+                writeFasta(final.aligned, final.names, "final_msa.fasta");
+            } else {
+                writeFasta(final.aligned, "final_msa.fasta");
+            }
             cout << "\nOutput written to final_msa.fasta" << endl;
             logInfo("Output file written successfully");
         }

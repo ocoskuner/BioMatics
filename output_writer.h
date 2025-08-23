@@ -12,6 +12,64 @@ void logInfo(const std::string& message);
 void logWarning(const std::string& message);
 
 /**
+ * Write aligned sequences to a FASTA file using provided names as headers.
+ * Falls back to generated names if sizes mismatch.
+ * @param aligned Aligned sequences (all of equal length)
+ * @param names Headers for each aligned sequence (same order and size as aligned)
+ * @param filename Output file path
+ * @throws std::runtime_error When there are no sequences to write or file cannot be created,
+ *         or when sequence lengths are inconsistent
+ */
+inline void writeFasta(const std::vector<std::string>& aligned, const std::vector<std::string>& names, const std::string& filename) {
+    try {
+        logDebug("Writing " + std::to_string(aligned.size()) + " sequences to " + filename + " with provided names");
+        
+        if (aligned.empty()) {
+            logError("No sequences to write");
+            throw std::runtime_error("No sequences to write");
+        }
+        
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            logError("Cannot create output file: " + filename);
+            throw std::runtime_error("Cannot create output file: " + filename);
+        }
+        
+        // Validate sequence lengths
+        size_t expected_length = aligned[0].length();
+        for (size_t i = 1; i < aligned.size(); ++i) {
+            if (aligned[i].length() != expected_length) {
+                logError("Sequence length mismatch: seq0=" + std::to_string(expected_length) + ", seq" + std::to_string(i) + "=" + std::to_string(aligned[i].length()));
+                throw std::runtime_error("Sequence length mismatch in output");
+            }
+        }
+        logDebug("All " + std::to_string(aligned.size()) + " sequences have length " + std::to_string(expected_length));
+
+        if (names.size() != aligned.size()) {
+            logWarning("Names size (" + std::to_string(names.size()) + ") does not match aligned size (" + std::to_string(aligned.size()) + "). Falling back to generated headers.");
+            for (size_t i = 0; i < aligned.size(); ++i) {
+                out << ">Sequence_" << i + 1 << "\n" << aligned[i] << "\n";
+            }
+        } else {
+            for (size_t i = 0; i < aligned.size(); ++i) {
+                out << ">" << names[i] << "\n" << aligned[i] << "\n";
+            }
+        }
+        
+        out.close();
+        logInfo("Successfully wrote alignment to " + filename);
+    }
+    catch (const std::exception& e) {
+        logError("Error writing FASTA file: " + std::string(e.what()));
+        throw;
+    }
+    catch (...) {
+        logError("Unknown error writing FASTA file");
+        throw;
+    }
+}
+
+/**
  * Write aligned sequences to a FASTA file with generated headers.
  * @param aligned Aligned sequences (all of equal length)
  * @param filename Output file path

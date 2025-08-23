@@ -63,6 +63,7 @@ Thumbs.db
 *.sam
 *.bam
 *.vcf
+*.csv
 
 # Backup files
 *.bak

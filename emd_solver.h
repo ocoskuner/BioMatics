@@ -43,10 +43,12 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
         
         if (sum1 == 0) {
             logError("First distribution has zero sum");
+            logDebug("Fallback used: returning EMD_ERROR due to zero-sum first distribution");
             return EMD_ERROR;
         }
         if (sum2 == 0) {
             logError("Second distribution has zero sum");
+            logDebug("Fallback used: returning EMD_ERROR due to zero-sum second distribution");
             return EMD_ERROR;
         }
         
@@ -63,6 +65,7 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
                 if (std::isnan(cost[i][j]) || std::isinf(cost[i][j])) {
                     logError("Invalid cost value at (" + std::to_string(i) + "," + std::to_string(j) + ")");
                     cost[i][j] = 0.0; // neutral fallback
+                    logDebug("Fallback used: neutral cost applied at (" + std::to_string(i) + "," + std::to_string(j) + ")");
                 }
             }
         }
@@ -87,6 +90,7 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
         // Check for numerical issues
         if (std::isnan(total_cost) || std::isinf(total_cost)) {
             logError("Invalid total cost in EMD: " + std::to_string(total_cost));
+            logDebug("Fallback used: returning EMD_ERROR due to invalid total cost");
             return EMD_ERROR;
         }
 
@@ -94,6 +98,7 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
         
         if (std::isnan(result) || std::isinf(result)) {
             logError("Invalid EMD result: " + std::to_string(result));
+            logDebug("Fallback used: returning EMD_ERROR due to invalid result");
             return EMD_ERROR;
         }
 
@@ -101,10 +106,12 @@ double calculateEMD(const std::vector<double>& dist1, const std::vector<double>&
     }
     catch (const std::exception& e) {
         logError("Exception in calculateEMD: " + std::string(e.what()));
+        logDebug("Fallback used: returning EMD_ERROR due to exception");
         return EMD_ERROR; // return high dissimilarity on error
     }
     catch (...) {
         logError("Unknown error in calculateEMD");
+        logDebug("Fallback used: returning EMD_ERROR due to unknown error");
         return EMD_ERROR;
     }
 }

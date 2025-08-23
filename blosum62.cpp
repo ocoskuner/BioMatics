@@ -71,11 +71,13 @@ std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
                     if (std::isnan(cost[i][j]) || std::isinf(cost[i][j])) {
                         logError(std::string("Invalid cost computed for (") + std::string(1, a) + "," + std::string(1, b) + "): " + std::to_string(cost[i][j]));
                         cost[i][j] = 0.0; // neutral fallback
+                        logDebug(std::string("Fallback used: neutral cost applied for (") + std::string(1, a) + "," + std::string(1, b) + ")");
                     }
                 }
                 catch (const std::exception& e) {
                     logError("Error computing cost for (" + std::to_string(i) + "," + std::to_string(j) + "): " + e.what());
                     cost[i][j] = 0.0; // neutral fallback
+                    logDebug("Fallback used: neutral cost applied due to exception at (" + std::to_string(i) + "," + std::to_string(j) + ")");
                 }
             }
         }

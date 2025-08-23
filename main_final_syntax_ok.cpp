@@ -66,6 +66,14 @@ void logError(const std::string& message) {
     std::cerr << "[ERROR] " << message << std::endl;
 }
 
+void logWarning(const std::string& message) {
+    if (logFile.is_open()) {
+        logFile << "[WARNING] " << message << endl;
+        logFile.flush();
+    }
+    std::cerr << "[WARNING] " << message << std::endl;
+}
+
 void logInfo(const std::string& message) {
     // Write to file
     if (logFile.is_open()) {
@@ -277,6 +285,7 @@ vector<vector<double>> computeDistributions(const vector<string>& aligned) {
         logDebug("Sequence length: " + to_string(L));
         
         vector<vector<double>> dist(L, vector<double>(21, 0.0));
+        vector<int> pureCols; // collect pure columns to summarize
         for (int i = 0; i < L; ++i) {
             unordered_map<char, int> count;
             for (size_t s = 0; s < aligned.size(); ++s)
@@ -287,15 +296,25 @@ vector<vector<double>> computeDistributions(const vector<string>& aligned) {
                 total += kv.second;
                 
             // Log column composition for debugging
-            if (count.size() == 1 && i < 5) { // Only log first few pure columns
-                char dominant_aa = count.begin()->first;
-                logDebug("Column " + to_string(i) + " is pure: all '" + string(1, dominant_aa) + "' (entropy will be 0)");
+            if (count.size() == 1) {
+                pureCols.push_back(i);
             } else if (count.size() > 10 && i < 5) { // High diversity columns
                 logDebug("Column " + to_string(i) + " has high diversity: " + to_string(count.size()) + " different amino acids");
             }
             
             for (int j = 0; j < 21; ++j)
                 dist[i][j] = count.count(AA[j]) ? count[AA[j]] / total : 0.0; // normalize
+        }
+        if (!pureCols.empty()) {
+            // summarize pure columns as requested
+            string idxs;
+            const int maxShow = 50; // avoid excessively long lines
+            for (size_t k = 0; k < pureCols.size(); ++k) {
+                if (k) idxs += ",";
+                idxs += to_string(pureCols[k]);
+                if (k + 1 == maxShow && pureCols.size() > maxShow) { idxs += ",..."; break; }
+            }
+            logDebug("Columns [" + idxs + "] are pure (entropy will be 0)");
         }
         logDebug("Successfully computed distributions");
         return dist;
@@ -359,6 +378,7 @@ vector<vector<double>> computeDistanceMatrix(const vector<string>& seqs) {
                 catch (const exception& e) {
                     logError("Error computing EMD for sequences " + to_string(i) + " and " + to_string(j) + ": " + string(e.what()));
                     D[i][j] = D[j][i] = EMD_ERROR; // fallback distance
+                    logDebug("Fallback used: set D[" + to_string(i) + "][" + to_string(j) + "] to EMD_ERROR");
                 }
             }
         }
@@ -542,10 +562,11 @@ pair<double, vector<pair<char, char>>> align(const vector<vector<double>>& A, co
                     M[i][j] = -1e6;
                     X[i][j] = -1e6;
                     Y[i][j] = -1e6;
+                    logDebug("Fallback used: DP cell (" + to_string(i) + "," + to_string(j) + ") set to default -1e6 values");
                 }
             }
             
-            if (i % 10 == 0) {
+            if (i % 10 == 0 || i == m) {
                 logDebug("Processed " + to_string(i) + "/" + to_string(m) + " rows in DP matrix");
             }
         }
@@ -568,6 +589,7 @@ pair<double, vector<pair<char, char>>> align(const vector<vector<double>>& A, co
             }
             catch (const exception& e) {
                 logError("Error in traceback at (" + to_string(i) + "," + to_string(j) + "): " + string(e.what()));
+                logDebug("Fallback used: aborting traceback and using partial alignment built so far");
                 break; // Exit traceback on error
             }
         }
@@ -934,6 +956,7 @@ int main() {
             logError("Failed in iterative refinement: " + string(e.what()));
             // Continue with initial alignment if refinement fails
             logInfo("Using initial alignment as final result");
+            logDebug("Fallback used: iterative refinement failed, proceeding with initial alignment");
             final = initial;
         }
 

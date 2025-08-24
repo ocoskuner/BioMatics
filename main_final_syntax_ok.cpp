@@ -363,6 +363,7 @@ vector<vector<double>> computeDistanceMatrix(const vector<string>& seqs) {
         }
         
         logDebug("Computing pairwise EMD distances");
+        #pragma omp parallel for
         for (int i = 0; i < N; ++i) {
             for (int j = i + 1; j < N; ++j) {
                 try {
@@ -532,67 +533,51 @@ pair<double, vector<pair<char, char>>> align(const vector<vector<double>>& A, co
             Y[0][j] = -go_vec_B[j - 1] - (j - 1) * ge_vec_B[j - 1];
 
         logDebug("Computing dynamic programming matrix");
-        for (int i = 1; i <= m; ++i) {
-            for (int j = 1; j <= n; ++j) {
-                try {
-                    double go = (go_vec_A[i - 1] + go_vec_B[j - 1]) / 2.0;
-                    double ge = (ge_vec_A[i - 1] + ge_vec_B[j - 1]) / 2.0;
+        for (int k = 2; k <= m + n; ++k) {
+            #pragma omp parallel for schedule(dynamic)
+            for (int i = max(1, k - n); i <= min(k - 1, m); ++i) {
+                int j = k - i;
 
-                    double emd_raw = calculateEMD(A[i - 1], B[j - 1]);
-                    char a_con = pickStrongConsensus(A[i - 1]);
-                    char b_con = pickStrongConsensus(B[j - 1]);
-                    double consensus_bonus = (a_con == b_con) ? -3.0 : 0.0;
+                double go = (go_vec_A[i - 1] + go_vec_B[j - 1]) / 2.0;
+                double ge = (ge_vec_A[i - 1] + ge_vec_B[j - 1]) / 2.0;
 
-                    double emd = -emd_raw + consensus_bonus;
+                double emd_raw = calculateEMD(A[i - 1], B[j - 1]);
+                char a_con = pickStrongConsensus(A[i - 1]);
+                char b_con = pickStrongConsensus(B[j - 1]);
+                double consensus_bonus = (a_con == b_con) ? -3.0 : 0.0;
 
-                    M[i][j] = emd + max({M[i - 1][j - 1], X[i - 1][j - 1], Y[i - 1][j - 1]});
+                double emd = -emd_raw + consensus_bonus;
 
-                    double entropy_i = calcEntropy(A[i - 1]);
-                    double entropy_j = calcEntropy(B[j - 1]);
-                    double entropy_factor = 1.0 + 0.75 * (1.0 - std::min(entropy_i, entropy_j));
+                M[i][j] = emd + max({M[i - 1][j - 1], X[i - 1][j - 1], Y[i - 1][j - 1]});
 
-                    double adj_go = go * entropy_factor;
-                    double adj_ge = ge * entropy_factor;
+                double entropy_i = calcEntropy(A[i - 1]);
+                double entropy_j = calcEntropy(B[j - 1]);
+                double entropy_factor = 1.0 + 0.75 * (1.0 - std::min(entropy_i, entropy_j));
 
-                    X[i][j] = max(M[i - 1][j] - adj_go, X[i - 1][j] - adj_ge);
-                    Y[i][j] = max(M[i][j - 1] - adj_go, Y[i][j - 1] - adj_ge);
-                }
-                catch (const exception& e) {
-                    logError("Error in DP cell (" + to_string(i) + "," + to_string(j) + "): " + string(e.what()));
-                    // Use default values for this cell
-                    M[i][j] = -1e6;
-                    X[i][j] = -1e6;
-                    Y[i][j] = -1e6;
-                    logDebug("Fallback used: DP cell (" + to_string(i) + "," + to_string(j) + ") set to default -1e6 values");
-                }
-            }
-            
-            if (i % 10 == 0 || i == m) {
-                logDebug("Processed " + to_string(i) + "/" + to_string(m) + " rows in DP matrix");
-            }
+                double adj_go = go * entropy_factor;
+                double adj_ge = ge * entropy_factor;
+
+                X[i][j] = max(M[i - 1][j] - adj_go, X[i - 1][j] - adj_ge);
+                Y[i][j] = max(M[i][j - 1] - adj_go, Y[i][j - 1] - adj_ge);
+            }    
         }
 
         logDebug("Performing traceback");
         vector<pair<char, char>> aln;
         int i = m, j = n;
-        while (i > 0 || j > 0) {
-            try {
-                if (i > 0 && j > 0 && M[i][j] >= X[i][j] && M[i][j] >= Y[i][j]) {
-                    aln.push_back({pickStrongConsensus(A[i - 1]), pickStrongConsensus(B[j - 1])});
-                    --i; --j;
-                } else if (i > 0 && X[i][j] >= Y[i][j]) {
-                    aln.push_back({pickStrongConsensus(A[i - 1]), '-'});
-                    --i;
-                } else {
-                    aln.push_back({'-', pickStrongConsensus(B[j - 1])});
-                    --j;
-                }
-            }
-            catch (const exception& e) {
-                logError("Error in traceback at (" + to_string(i) + "," + to_string(j) + "): " + string(e.what()));
-                logDebug("Fallback used: aborting traceback and using partial alignment built so far");
-                break; // Exit traceback on error
-            }
+        while (i > 0 || j > 0) { 
+            if (i > 0 && j > 0 && M[i][j] >= X[i][j] && M[i][j] >= Y[i][j]) {
+                aln.push_back({pickStrongConsensus(A[i - 1]), pickStrongConsensus(B[j - 1])});
+                --i; --j;
+            } else if (i > 0 && X[i][j] >= Y[i][j]) {
+                aln.push_back({pickStrongConsensus(A[i - 1]), '-'});
+                --i;
+            } else if (j > 0){
+                aln.push_back({'-', pickStrongConsensus(B[j - 1])});
+                --j;
+            } else {
+                break;
+            }    
         }
 
         reverse(aln.begin(), aln.end());

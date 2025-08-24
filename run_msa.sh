@@ -17,7 +17,7 @@ else
 fi
 
 echo "Compiling with $CXX (-std=c++17 -g)..."
-"$CXX" -std=c++17 -g main_final_syntax_ok.cpp blosum62.cpp -o msa_program
+"$CXX" -std=c++17 -g -fopenmp main_final_syntax_ok.cpp blosum62.cpp -o msa_program
 echo "Compilation successful -> ./msa_program"
 
 if [[ ! -f input.fasta ]]; then

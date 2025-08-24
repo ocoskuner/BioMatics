@@ -15,7 +15,7 @@ try {
     }
 
     Write-Host "Compiling (g++ -g -std=c++17)..." -ForegroundColor Cyan
-    & g++ -g -std=c++17 main_final_syntax_ok.cpp blosum62.cpp -o msa_program.exe
+    & g++ -g -std=c++17 -fopenmp main_final_syntax_ok.cpp blosum62.cpp -o msa_program.exe
     if ($LASTEXITCODE -ne 0) {
         throw "Compilation failed with exit code $LASTEXITCODE"
     }

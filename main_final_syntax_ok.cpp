@@ -20,6 +20,10 @@
 #include <unordered_map>
 #include <stdexcept>
 #include <iomanip>
+#include <chrono>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "blosum62.h"
 #include "emd_solver.h"
 #include "fasta_reader.h"
@@ -98,6 +102,10 @@ void logProgress(const std::string& message) {
 vector<vector<double>> computeDistanceMatrix(const vector<string>& seqs);
 
 unordered_map<char, int> AA_INDEX;
+
+// Global cached full pairwise distance matrix for reuse (e.g., in refinement)
+static vector<vector<double>> GLOBAL_DIST_MATRIX;
+static bool GLOBAL_DIST_READY = false;
 
 /**
  * Binary tree node used for the guide tree.
@@ -348,39 +356,62 @@ vector<vector<double>> computeDistanceMatrix(const vector<string>& seqs) {
         
         int N = seqs.size();
         vector<vector<double>> D(N, vector<double>(N, 0.0));
-        vector<vector<vector<double>>> distros(N);
         
-        logDebug("Computing distributions for each sequence");
-        for (int i = 0; i < N; ++i) {
-            try {
-                distros[i] = computeDistributions({seqs[i]}); // one-hot per position
-                logDebug("Processed sequence " + to_string(i+1) + "/" + to_string(N));
-            }
-            catch (const exception& e) {
-                logError("Error processing sequence " + to_string(i) + ": " + string(e.what()));
-                throw;
+        // Precompute one-hot EMD lookup: tanh(max(cost[i][j], -3.5)) for AA indices
+        static vector<vector<double>> emd_lookup;
+        if (emd_lookup.empty()) {
+            auto cost = getRealBlosumLogOddsMatrix();
+            emd_lookup.assign(cost.size(), vector<double>(cost[0].size(), 0.0));
+            for (size_t i = 0; i < cost.size(); ++i) {
+                for (size_t j = 0; j < cost[i].size(); ++j) {
+                    double c = cost[i][j];
+                    if (std::isnan(c) || std::isinf(c)) c = 0.0;
+                    c = std::max(c, -3.5);
+                    emd_lookup[i][j] = std::tanh(c);
+                }
             }
         }
         
-        logDebug("Computing pairwise EMD distances");
+        logDebug("Computing pairwise EMD distances (one-hot lookup)");
+        // Build list of unique (i,j) pairs with i < j to parallelize safely
+        vector<pair<int,int>> pairs;
+        pairs.reserve((static_cast<long long>(N) * (N - 1)) / 2);
         for (int i = 0; i < N; ++i) {
             for (int j = i + 1; j < N; ++j) {
-                try {
-                    double sum_emd = 0.0;
-                    int L = min(distros[i].size(), distros[j].size());
-                    for (int k = 0; k < L; ++k)
-                        sum_emd += calculateEMD(distros[i][k], distros[j][k]); // per-column EMD
-                    D[i][j] = D[j][i] = L ? sum_emd / L : EMD_ERROR;
-                    
-                    if ((i * N + j) % 10 == 0) {
-                        logDebug("Computed distance for pair (" + to_string(i) + "," + to_string(j) + "): " + to_string(D[i][j]));
+                pairs.emplace_back(i, j);
+            }
+        }
+
+        #pragma omp parallel for schedule(static)
+        for (int p = 0; p < static_cast<int>(pairs.size()); ++p) {
+            int i = pairs[p].first;
+            int j = pairs[p].second;
+            try {
+                double sum_emd = 0.0;
+                int L = static_cast<int>(min(seqs[i].size(), seqs[j].size()));
+                for (int k = 0; k < L; ++k) {
+                    char a = seqs[i][k];
+                    char b = seqs[j][k];
+                    auto ita = AA_INDEX.find(a);
+                    auto itb = AA_INDEX.find(b);
+                    if (ita == AA_INDEX.end() || itb == AA_INDEX.end()) {
+                        sum_emd += EMD_ERROR; // identical behavior when distribution is invalid
+                    } else {
+                        sum_emd += emd_lookup[ita->second][itb->second];
                     }
                 }
-                catch (const exception& e) {
-                    logError("Error computing EMD for sequences " + to_string(i) + " and " + to_string(j) + ": " + string(e.what()));
-                    D[i][j] = D[j][i] = EMD_ERROR; // fallback distance
-                    logDebug("Fallback used: set D[" + to_string(i) + "][" + to_string(j) + "] to EMD_ERROR");
+                double value = L ? (sum_emd / L) : EMD_ERROR;
+                D[i][j] = value;
+                D[j][i] = value;
+
+                if (((static_cast<long long>(i) * N) + j) % 10 == 0) {
+                    logDebug("Computed distance for pair (" + to_string(i) + "," + to_string(j) + "): " + to_string(value));
                 }
+            }
+            catch (const exception& e) {
+                logError("Error computing EMD for sequences " + to_string(i) + " and " + to_string(j) + ": " + string(e.what()));
+                D[i][j] = D[j][i] = EMD_ERROR; // fallback distance
+                logDebug("Fallback used: set D[" + to_string(i) + "][" + to_string(j) + "] to EMD_ERROR");
             }
         }
         
@@ -819,8 +850,9 @@ if (verbose) cout << "\n Iteration " << iter + 1 << endl;
 for (int i = 0; i < seqs.size(); ++i) {
 vector<string> rest;
 vector<string> restNames;
+vector<int> restIdx;
 for (int j = 0; j < seqs.size(); ++j) {
-if (i != j) { rest.push_back(seqs[j]); restNames.push_back(names[j]); }
+if (i != j) { rest.push_back(seqs[j]); restNames.push_back(names[j]); restIdx.push_back(j); }
 }
 
 vector<Profile> partialProfiles;
@@ -834,7 +866,23 @@ for (int ri = 0; ri < rest.size(); ++ri) {
     partialProfiles.push_back(std::move(p));
 }
 
-vector<vector<double>> dist = computeDistanceMatrix(rest);
+vector<vector<double>> dist;
+if (GLOBAL_DIST_READY) {
+    int R = static_cast<int>(restIdx.size());
+    dist.assign(R, vector<double>(R, 0.0));
+    for (int a = 0; a < R; ++a) {
+        for (int b = 0; b < R; ++b) {
+            dist[a][b] = GLOBAL_DIST_MATRIX[restIdx[a]][restIdx[b]];
+        }
+    }
+    try {
+        writeCSV(dist, "emd_distance_matrix.csv"); // preserve previous side-effect
+    } catch (...) {
+        // Ignore write failures here to match robustness of original pipeline
+    }
+} else {
+    dist = computeDistanceMatrix(rest);
+}
 TreeNode* tree = buildGuideTree(dist);
 Profile alignedRest = alignFromTree(tree, partialProfiles);
 
@@ -881,6 +929,7 @@ int main() {
     initializeLogFile();
     logInfo("Starting Multiple Sequence Alignment (MSA) program");
     logProgress("Initializing MSA program...");
+    auto programStart = std::chrono::steady_clock::now();
     
     try {
         srand(static_cast<unsigned int>(time(0)));
@@ -912,6 +961,8 @@ int main() {
         vector<vector<double>> D;
         try {
             D = computeDistanceMatrix(seqs);
+            GLOBAL_DIST_MATRIX = D;
+            GLOBAL_DIST_READY = true;
         }
         catch (const exception& e) {
             logError("Failed to compute distance matrix: " + string(e.what()));
@@ -1037,6 +1088,10 @@ int main() {
         }
 
         logProgress("MSA program completed successfully!");
+        auto programEnd = std::chrono::steady_clock::now();
+        double elapsedSec = std::chrono::duration<double>(programEnd - programStart).count();
+        logInfo("Total runtime (s): " + to_string(elapsedSec));
+        cout << "Total runtime: " << fixed << setprecision(3) << elapsedSec << " s" << endl;
         logInfo("Check 'msa_debug.log' for detailed debug information");
         closeLogFile();
         return 0;

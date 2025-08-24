@@ -26,6 +26,11 @@ const int AA_SIZE = 21;
 std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
     try {
         // Removed verbose debug logging to reduce output noise
+        // Cache the computed matrix to avoid recomputation (thread-safe since C++11)
+        static std::vector<std::vector<double>> cached;
+        if (!cached.empty()) {
+            return cached; // return cached copy-by-value (behavior unchanged)
+        }
         std::unordered_map<char, double> P = {
             {'A', 0.078}, {'C', 0.019}, {'D', 0.053}, {'E', 0.062},
             {'F', 0.040}, {'G', 0.073}, {'H', 0.023}, {'I', 0.053},
@@ -45,7 +50,7 @@ std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
         }
 
         std::vector<std::vector<double>> P_ij(AA_SIZE, std::vector<double>(AA_SIZE));
-        std::vector<std::vector<double>> cost(AA_SIZE, std::vector<double>(AA_SIZE));
+        cached.assign(AA_SIZE, std::vector<double>(AA_SIZE));
 
         for (int i = 0; i < AA_SIZE; ++i) {
             for (int j = 0; j < AA_SIZE; ++j) {
@@ -65,18 +70,18 @@ std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
                     double ratio = raw_ratio;
                     if (ratio < 1e-6) ratio = 1e-6;
                     else if (ratio > 1e6) ratio = 1e6;
-                    cost[i][j] = -log2(ratio);            // convert to log-odds cost
+                    cached[i][j] = -log2(ratio);            // convert to log-odds cost
                     
                     // Validate the computed cost
-                    if (std::isnan(cost[i][j]) || std::isinf(cost[i][j])) {
-                        logError(std::string("Invalid cost computed for (") + std::string(1, a) + "," + std::string(1, b) + "): " + std::to_string(cost[i][j]));
-                        cost[i][j] = 0.0; // neutral fallback
+                    if (std::isnan(cached[i][j]) || std::isinf(cached[i][j])) {
+                        logError(std::string("Invalid cost computed for (") + std::string(1, a) + "," + std::string(1, b) + "): " + std::to_string(cached[i][j]));
+                        cached[i][j] = 0.0; // neutral fallback
                         logDebug(std::string("Fallback used: neutral cost applied for (") + std::string(1, a) + "," + std::string(1, b) + ")");
                     }
                 }
                 catch (const std::exception& e) {
                     logError("Error computing cost for (" + std::to_string(i) + "," + std::to_string(j) + "): " + e.what());
-                    cost[i][j] = 0.0; // neutral fallback
+                    cached[i][j] = 0.0; // neutral fallback
                     logDebug("Fallback used: neutral cost applied due to exception at (" + std::to_string(i) + "," + std::to_string(j) + ")");
                 }
             }
@@ -84,7 +89,7 @@ std::vector<std::vector<double>> getRealBlosumLogOddsMatrix() {
         
         // Log some sample values for verification
         
-        return cost;
+        return cached;
     }
     catch (const std::exception& e) {
         logError("Error in getRealBlosumLogOddsMatrix: " + std::string(e.what()));

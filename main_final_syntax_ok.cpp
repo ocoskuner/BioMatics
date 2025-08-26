@@ -134,6 +134,60 @@ struct Profile {
 };
 
 /**
+ * Reorder final alignment rows to match the original FASTA order.
+ * If a name from the original list is not found, it is skipped.
+ * If the reordering cannot cover all rows, returns the original order.
+ */
+pair<vector<string>, vector<string>> reorderAlignmentToOriginal(
+    const vector<string>& aligned,
+    const vector<string>& currentNames,
+    const vector<string>& originalNames)
+{
+    try {
+        if (aligned.size() != currentNames.size()) {
+            logWarning("Cannot reorder: names/aligned size mismatch");
+            return {aligned, currentNames};
+        }
+
+        unordered_map<string, vector<int>> nameToIndices;
+        nameToIndices.reserve(currentNames.size());
+        for (int i = 0; i < static_cast<int>(currentNames.size()); ++i) {
+            nameToIndices[currentNames[i]].push_back(i);
+        }
+
+        unordered_map<string, size_t> usedCount;
+        vector<string> orderedAligned;
+        vector<string> orderedNames;
+        orderedAligned.reserve(aligned.size());
+        orderedNames.reserve(aligned.size());
+
+        for (const string& nm : originalNames) {
+            auto it = nameToIndices.find(nm);
+            size_t used = usedCount[nm];
+            if (it != nameToIndices.end() && used < it->second.size()) {
+                int idx = it->second[used];
+                usedCount[nm] = used + 1;
+                orderedAligned.push_back(aligned[idx]);
+                orderedNames.push_back(currentNames[idx]);
+            } else {
+                logWarning(string("Original name not found in final alignment: ") + nm);
+            }
+        }
+
+        if (orderedAligned.size() != aligned.size()) {
+            logWarning("Reordering incomplete; preserving final alignment order");
+            return {aligned, currentNames};
+        }
+
+        return {orderedAligned, orderedNames};
+    }
+    catch (const exception& e) {
+        logError(string("Error during reordering: ") + e.what());
+        return {aligned, currentNames};
+    }
+}
+
+/**
  * Pick the consensus symbol with the maximum weight in a column distribution.
  * @param profile Probability distribution of size 21 over the AA alphabet (including '-')
  * @return The consensus character
@@ -1022,20 +1076,31 @@ int main() {
             final = initial;
         }
 
+        // Reorder final alignment to original FASTA order so that A3M master is the input's first sequence
+        auto reordered = reorderAlignmentToOriginal(final.aligned, final.names, names);
+        const vector<string>& outAligned = reordered.first;
+        const vector<string>& outNames = reordered.second;
+        logInfo("Final alignment reordered to original FASTA order for output");
+
         cout << "\n=== FINAL MULTIPLE ALIGNMENT ===" << endl;
-        for (size_t i = 0; i < final.aligned.size(); ++i) {
-            const string& nm = (final.names.size() == final.aligned.size()) ? final.names[i] : (string("Sequence_") + to_string(i+1));
-            cout << ">" << nm << "\n" << final.aligned[i] << endl;
+        if (outNames.size() == outAligned.size()) {
+            for (size_t i = 0; i < outAligned.size(); ++i) {
+                cout << ">" << outNames[i] << "\n" << outAligned[i] << endl;
+            }
+        } else {
+            for (size_t i = 0; i < outAligned.size(); ++i) {
+                cout << ">Sequence_" << i + 1 << "\n" << outAligned[i] << endl;
+            }
         }
 
         logProgress("Writing results to file...");
         try {
-            if (final.names.size() == final.aligned.size()) {
-                writeFasta(final.aligned, final.names, "final_msa.fasta");
-                writeA3M(final.aligned, final.names, "final_msa.a3m");
+            if (outNames.size() == outAligned.size()) {
+                writeFasta(outAligned, outNames, "final_msa.fasta");
+                writeA3M(outAligned, outNames, "final_msa.a3m");
             } else {
-                writeFasta(final.aligned, "final_msa.fasta");
-                writeA3M(final.aligned, "final_msa.a3m");
+                writeFasta(outAligned, "final_msa.fasta");
+                writeA3M(outAligned, "final_msa.a3m");
             }
             cout << "\nOutput written to final_msa.fasta" << endl;
             cout << "A3M written to final_msa.a3m" << endl;
